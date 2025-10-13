@@ -1,0 +1,55 @@
+# config.yaml
+symbols: []  # Để trống để quét tất cả cặp
+
+# Chỉ 1 khung giờ duy nhất
+timeframe: "5m"
+
+binance:
+  api_key: "nKOWiUgNxorRZtD8urVbwnaxk5WyJ70IRrvH0EqMl3PFucuVX5EuRQxrvPFH8A4v"
+  secret_key: "EetKj9b6w9R7BooFEjr8K31HpQbGn41PPVt2kBReoyep4mVIZODMtiWbjRYmQ6qn"
+  base_url: "https://testnet.binancefuture.com"
+
+websocket:
+  base_url: "wss://stream.binance.com"
+  reconnect_delay: 5
+
+logging:
+  level: "INFO"
+  log_file: "candle_scanner.log"
+  signals_log_file: "trading_signals.log"
+  trading_log_file: "trading_results.log"
+  max_file_size_mb: 100
+  backup_count: 5
+
+analysis:
+  update_interval: 1.0
+  max_symbols_per_connection: 100
+  scan_all_pairs: true  # Quét tất cả các cặp USDT
+
+trading:
+  # Cấu hình risk management
+  risk_reward_ratio: 1.5
+  take_profit_percentage: 10  # TP 1.5%
+  stop_loss_percentage: 35  # SL 1%
+  account_balance: 20  # Số dư tài khoản giả lập
+  leverage: 25  # ĐÒN BẨY 10x
+  position_size_usdt: 1  # SỐ TIỀN MỖI LỆNH (QUAN TRỌNG)
+
+  # Cấu hình entry strategy
+  entry_strategy: "counter_trend"
+  entry_price_offset: 0.05  # Entry cách giá hiện tại 0.05%
+
+  # Cấu hình volume filter
+  min_volume: 30000  # Volume tối thiểu
+  volume_spike_threshold: 1.5  # Volume phải gấp 1.5 lần trung bình
+
+  # Cấu hình giả lập lệnh
+  virtual_trading: true
+  max_open_orders: 10  # Số lệnh mở tối đa cùng lúc
+
+  # Cấu hình mô hình nến
+  enabled_patterns:
+    bullish: ["HAMMER", "INVERTED_HAMMER", "BULLISH_ENGULFING"]
+    bearish: ["SHOOTING_STAR", "HANGING_MAN", "BEARISH_ENGULFING"]
+#    bullish
+#    bearish
