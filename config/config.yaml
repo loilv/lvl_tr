@@ -5,10 +5,15 @@ symbols: []  # Để trống để quét tất cả cặp
 timeframe: "5m"
 
 binance:
+#  api_key: "nKOWiUgNxorRZtD8urVbwnaxk5WyJ70IRrvH0EqMl3PFucuVX5EuRQxrvPFH8A4v"
+#  secret_key: "EetKj9b6w9R7BooFEjr8K31HpQbGn41PPVt2kBReoyep4mVIZODMtiWbjRYmQ6qn"
+#  base_url: "https://testnet.binancefuture.com"
+#  testnet: True
+
   api_key: "nKOWiUgNxorRZtD8urVbwnaxk5WyJ70IRrvH0EqMl3PFucuVX5EuRQxrvPFH8A4v"
   secret_key: "EetKj9b6w9R7BooFEjr8K31HpQbGn41PPVt2kBReoyep4mVIZODMtiWbjRYmQ6qn"
-  base_url: "https://testnet.binancefuture.com"
-  testnet: True
+  base_url: "https://fapi.binance.com"
+  testnet: False
 
 websocket:
   base_url: "wss://stream.binance.com"
