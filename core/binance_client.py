@@ -8,8 +8,8 @@ from logging.handlers import RotatingFileHandler
 class BinanceOrderWatcher:
     def __init__(self, config):
         """Khởi tạo client Binance và WebSocket manager"""
-        self.client = Client(config.api_key, config.secret_key, testnet=True)
-        self.twm = ThreadedWebsocketManager(api_key=config.api_key, api_secret=config.secret_key, testnet=True)
+        self.client = Client(config.api_key, config.secret_key, testnet=config.testnet)
+        self.twm = ThreadedWebsocketManager(api_key=config.api_key, api_secret=config.secret_key, testnet=config.testnet)
         self.tp_percent = config.take_profit_percentage
         self.sl_percent = config.stop_loss_percentage
         self.active_orders = {}  # symbol -> order_id

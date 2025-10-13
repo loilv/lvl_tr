@@ -52,6 +52,7 @@ class Config:
             self.api_key = binance_config.get('api_key', '')
             self.secret_key = binance_config.get('secret_key', '')
             self.base_url = binance_config.get('base_url', '')
+            self.testnet = binance_config.get('testnet', False)
 
             # Cấu hình mô hình nến
             self.enabled_bearish_patterns = trading_config.get('enabled_patterns', {}).get('bearish', [])
