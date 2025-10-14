@@ -135,9 +135,9 @@ class PatternScanner:
 
                 # Xác định loại lệnh
                 if pattern in self.config.enabled_bullish_patterns:
-                    order_type = "BUY"
-                elif pattern in self.config.enabled_bearish_patterns:
                     order_type = "SELL"
+                elif pattern in self.config.enabled_bearish_patterns:
+                    order_type = "BUY"
                 else:
                     return
 
