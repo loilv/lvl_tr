@@ -200,13 +200,13 @@ class BinanceOrderWatcher:
         if side.upper() == "BUY":
             tp_price = entry_price * (1 + rate_tp / 1000)
             sl_price = entry_price * (1 - rate_sl / 1000)
-            tp_trigger = tp_price * 0.999  # kích hoạt sớm hơn chút
-            sl_trigger = sl_price * 1.001  # kích hoạt muộn hơn chút
+            tp_trigger = tp_price * 1.001
+            sl_trigger = sl_price * 0.999
         elif side.upper() == "SELL":
             tp_price = entry_price * (1 - rate_tp / 1000)
             sl_price = entry_price * (1 + rate_sl / 1000)
-            tp_trigger = tp_price * 1.001
-            sl_trigger = sl_price * 0.999
+            tp_trigger = tp_price * 0.999
+            sl_trigger = sl_price * 1.001
         else:
             raise ValueError("Side phải là BUY hoặc SELL")
 
