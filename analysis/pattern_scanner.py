@@ -134,28 +134,25 @@ class PatternScanner:
             }
 
         # Chỉ xử lý khi chỉ có 1 râu
-        if (upper_wick > 0 and lower_wick == 0) or (lower_wick > 0 and upper_wick == 0):
-            # Râu trên dài
-            if upper_ratio >= wick_ratio and lower_ratio < wick_ratio:
-                if is_bearish:
-                    signal = "SELL"
-                    reason = f"Nến giảm có râu trên dài ({upper_ratio:.2f}x thân)"
-                elif is_bullish:
-                    signal = "BUY"
-                    reason = f"Nến tăng có râu trên dài ({upper_ratio:.2f}x thân)"
+        # Râu trên dài
+        if upper_ratio >= wick_ratio and upper_wick > 0 and open_price == low_price:
+            if is_bearish:
+                signal = "BUY"
+                reason = f"Nến giảm có râu trên dài ({upper_ratio:.2f}x thân)"
+            elif is_bullish:
+                signal = "SELL"
+                reason = f"Nến tăng có râu trên dài ({upper_ratio:.2f}x thân)"
 
-            # Râu dưới dài
-            elif lower_ratio >= wick_ratio and upper_ratio < wick_ratio:
-                if is_bearish:
-                    signal = "SELL"
-                    reason = f"Nến giảm có râu dưới dài ({lower_ratio:.2f}x thân)"
-                elif is_bullish:
-                    signal = "BUY"
-                    reason = f"Nến tăng có râu dưới dài ({lower_ratio:.2f}x thân)"
-            else:
-                reason = "Râu không đủ 2.5x thân nến"
+        # Râu dưới dài
+        elif lower_ratio >= wick_ratio and lower_wick > 0 and open_price == high_price:
+            if is_bearish:
+                signal = "SELL"
+                reason = f"Nến giảm có râu dưới dài ({lower_ratio:.2f}x thân)"
+            elif is_bullish:
+                signal = "BUY"
+                reason = f"Nến tăng có râu dưới dài ({lower_ratio:.2f}x thân)"
         else:
-            reason = "Có 2 râu hoặc không có râu"
+            reason = ""
 
         return {
             "open": open_price,
