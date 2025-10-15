@@ -164,78 +164,61 @@ class PatternScanner:
             logging.info(f"❌ Lỗi xử lý nến {symbol}: {e}")
 
     def analyze_candlestick_patterns(self, symbol_data, open_price, close_price, high_price, low_price):
-        """Phân tích các mô hình nến"""
+        """Phân tích mô hình nến"""
         try:
+            total_range = high_price - low_price
+            if total_range <= 0:
+                return None
+
             body_size = abs(close_price - open_price)
             upper_shadow = high_price - max(open_price, close_price)
             lower_shadow = min(open_price, close_price) - low_price
-            total_range = high_price - low_price
-
-            if total_range == 0:
-                return None
 
             upper_shadow_ratio = upper_shadow / total_range
-            body_ratio = body_size / total_range
             lower_shadow_ratio = lower_shadow / total_range
+            body_ratio = body_size / total_range
 
-            is_bearish = close_price > open_price
-            is_bullish = close_price < open_price
-            # enabled_bullish_patterns
-            # enabled_bearish_patterns
+            is_bullish = close_price > open_price * 1.001
+            is_bearish = close_price < open_price * 0.999
 
-            # SHOOTING STAR
-            if ("SHOOTING_STAR" in self.config.enabled_bearish_patterns and
-                    is_bearish and
-                    upper_shadow >= body_size * 1.5 and
-                    upper_shadow_ratio >= 0.4 and
-                    lower_shadow_ratio <= 0.2):
+            prev_candle = getattr(symbol_data, "prev_candle", None)
+
+            # --- Bearish patterns ---
+            if "SHOOTING_STAR" in self.config.enabled_bearish_patterns and \
+                    is_bearish and upper_shadow >= body_size * 1.5 and \
+                    upper_shadow_ratio >= 0.4 and lower_shadow_ratio <= 0.2:
                 return "SHOOTING_STAR"
 
-            # HANGING MAN
-            elif ("HANGING_MAN" in self.config.enabled_bearish_patterns and
-                  is_bearish and
-                  lower_shadow >= body_size * 1.5 and
-                  lower_shadow_ratio >= 0.4 and
-                  upper_shadow_ratio <= 0.2):
+            if "HANGING_MAN" in self.config.enabled_bearish_patterns and \
+                    lower_shadow >= body_size * 1.5 and \
+                    lower_shadow_ratio >= 0.4 and upper_shadow_ratio <= 0.2:
                 return "HANGING_MAN"
 
-            # BEARISH ENGULFING
-            elif ("BEARISH_ENGULFING" in self.config.enabled_bearish_patterns and
-                  symbol_data.prev_candle is not None):
-                prev_open, prev_close = symbol_data.prev_candle
-                if (is_bearish and
-                        prev_close > prev_open and
-                        open_price > prev_close and
-                        close_price < prev_open):
+            if "BEARISH_ENGULFING" in self.config.enabled_bearish_patterns and prev_candle:
+                prev_open, prev_close = prev_candle
+                if is_bearish and prev_close > prev_open and \
+                        open_price > prev_close and close_price < prev_open:
                     return "BEARISH_ENGULFING"
 
-            # HAMMER
-            elif ("HAMMER" in self.config.enabled_bullish_patterns and
-                  is_bullish and
-                  lower_shadow >= body_size * 1.5 and
-                  lower_shadow_ratio >= 0.4 and
-                  upper_shadow_ratio <= 0.2):
+            # --- Bullish patterns ---
+            if "HAMMER" in self.config.enabled_bullish_patterns and \
+                    lower_shadow >= body_size * 1.5 and \
+                    lower_shadow_ratio >= 0.4 and upper_shadow_ratio <= 0.2:
                 return "HAMMER"
 
-            # INVERTED HAMMER
-            elif ("INVERTED_HAMMER" in self.config.enabled_bullish_patterns and
-                  is_bullish and
-                  upper_shadow >= body_size * 1.5 and
-                  upper_shadow_ratio >= 0.4 and
-                  lower_shadow_ratio <= 0.2):
+            if "INVERTED_HAMMER" in self.config.enabled_bullish_patterns and \
+                    upper_shadow >= body_size * 1.5 and \
+                    upper_shadow_ratio >= 0.4 and lower_shadow_ratio <= 0.2:
                 return "INVERTED_HAMMER"
 
-            # BULLISH ENGULFING
-            elif ("BULLISH_ENGULFING" in self.config.enabled_bullish_patterns and
-                  symbol_data.prev_candle is not None):
-                prev_open, prev_close = symbol_data.prev_candle
-                if (is_bullish and
-                        prev_close < prev_open and
-                        open_price < prev_close and
-                        close_price > prev_open):
+            if "BULLISH_ENGULFING" in self.config.enabled_bullish_patterns and prev_candle:
+                prev_open, prev_close = prev_candle
+                if is_bullish and prev_close < prev_open and \
+                        open_price < prev_close and close_price > prev_open:
                     return "BULLISH_ENGULFING"
 
             return None
+
         except Exception as e:
-            logging.info(f"Lỗi phân tích mô hình nến: {e}")
+            logging.exception(f"Lỗi phân tích mô hình nến: {e}")
             return None
