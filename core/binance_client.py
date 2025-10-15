@@ -64,20 +64,13 @@ class BinanceOrderWatcher:
         self.active_orders[symbol] = {'id': order_id, 'price': price, 'time': time.time()}
         logging.info(f"✅ Đã khớp {self.active_orders}")
 
-    def remove_active_orders(self, symbol, price):
-        positions = self.client.futures_position_information()
-        self.client.futures_cancel_all_open_orders(symbol=symbol)
-        for p in positions:
-            if p['symbol'] == symbol:
-                order = p
-                if order and order['positionAmt'] != '0':
-                    pnl = order['unRealizedProfit']
-                    self.trading_logger.info(
-                        f"ĐÓNG LỆNH | {symbol} | "
-                        f"Kết quả: {'WIN' if pnl > 0 else 'LOSS'} | Giá đóng: {price:.6f} | "
-                        f"PnL: {pnl}USDT | "
-                        f"Thời gian: {order['updateTime']}"
-                    )
+    def close_order(self, data):
+        self.trading_logger.info(
+            f"ĐÓNG LỆNH | {data['s']} | "
+            f"Kết quả: {'WIN' if data['ot'] == 'TAKE_PROFIT' else 'LOSS'} | "
+            f"Loại: {data['ot']} | "
+            f"Thời gian: {data['T']}"
+        )
 
     def _format_price(self, symbol: str, price: float) -> float:
         """Format price theo tick size của symbol"""
