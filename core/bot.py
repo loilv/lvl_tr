@@ -90,7 +90,9 @@ class CandlePatternScannerBot:
             if data['R']:
                 self.binance_watcher.close_order(data, symbol)
             else:
-                self.binance_watcher.set_active_orders(symbol, order_id, entry_price)
+                self.binance_watcher._create_tp_sl_limit_orders(
+                    symbol, side, entry_price, quantity)
+                # self.binance_watcher.set_active_orders(symbol, order_id, entry_price)
 
 
     def stop(self):
