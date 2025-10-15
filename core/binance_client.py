@@ -154,66 +154,65 @@ class BinanceOrderWatcher:
 
     def _check_and_close_tp_sl(self, symbol):
         """Kiểm tra giá hiện tại so với entry, nếu chạm TP/SL thì đóng vị thế ngay lập tức"""
-        positions = self.client.futures_position_information(symbol=symbol)
-
+        positions = self.client.futures_position_information()
         if not positions:
             logging.warning(f"Không tìm thấy vị thế {symbol}")
             return
+        for p in positions:
+            logging.info(f'Vị thế: {p}')
+            position_size = float(p["positionAmt"])
+            if position_size == 0:
+                logging.info(f"Không có vị thế mở cho {symbol}")
+                return
 
-        p = positions[0]
-        position_size = float(p["positionAmt"])
-        if position_size == 0:
-            logging.info(f"Không có vị thế mở cho {symbol}")
-            return
+            entry_price = float(p["entryPrice"])
+            mark_price = float(p["markPrice"])
 
-        entry_price = float(p["entryPrice"])
-        mark_price = float(p["markPrice"])
+            side = "BUY" if position_size > 0 else "SELL"
+            close_side = "SELL" if side == "BUY" else "BUY"
 
-        side = "BUY" if position_size > 0 else "SELL"
-        close_side = "SELL" if side == "BUY" else "BUY"
+            rate_tp = self.config.take_profit_percentage / 100
+            rate_sl = self.config.stop_loss_percentage / 100
 
-        rate_tp = self.config.take_profit_percentage / 100
-        rate_sl = self.config.stop_loss_percentage / 100
+            # Tính giá TP/SL
+            if side == "BUY":  # LONG
+                tp_price = entry_price * (1 + rate_tp)
+                sl_price = entry_price * (1 - rate_sl)
 
-        # Tính giá TP/SL
-        if side == "BUY":  # LONG
-            tp_price = entry_price * (1 + rate_tp)
-            sl_price = entry_price * (1 - rate_sl)
+                if mark_price >= tp_price:
+                    reason = "Take Profit"
+                    trigger = tp_price
+                elif mark_price <= sl_price:
+                    reason = "Stop Loss"
+                    trigger = sl_price
+                else:
+                    return  # chưa chạm TP/SL
+            else:  # SHORT
+                tp_price = entry_price * (1 - rate_tp)
+                sl_price = entry_price * (1 + rate_sl)
 
-            if mark_price >= tp_price:
-                reason = "Take Profit"
-                trigger = tp_price
-            elif mark_price <= sl_price:
-                reason = "Stop Loss"
-                trigger = sl_price
-            else:
-                return  # chưa chạm TP/SL
-        else:  # SHORT
-            tp_price = entry_price * (1 - rate_tp)
-            sl_price = entry_price * (1 + rate_sl)
+                if mark_price <= tp_price:
+                    reason = "Take Profit"
+                    trigger = tp_price
+                elif mark_price >= sl_price:
+                    reason = "Stop Loss"
+                    trigger = sl_price
+                else:
+                    return  # chưa chạm TP/SL
 
-            if mark_price <= tp_price:
-                reason = "Take Profit"
-                trigger = tp_price
-            elif mark_price >= sl_price:
-                reason = "Stop Loss"
-                trigger = sl_price
-            else:
-                return  # chưa chạm TP/SL
+            # --- Nếu đến đây, tức là đã chạm TP hoặc SL ---
+            logging.info(f"📉 {reason} đạt cho {symbol} | Entry={entry_price} | Mark={mark_price} | Trigger={trigger}")
 
-        # --- Nếu đến đây, tức là đã chạm TP hoặc SL ---
-        logging.info(f"📉 {reason} đạt cho {symbol} | Entry={entry_price} | Mark={mark_price} | Trigger={trigger}")
+            # Tạo lệnh đóng vị thế ngay lập tức
+            self.client.futures_create_order(
+                symbol=symbol,
+                side=close_side,
+                type="MARKET",
+                quantity=abs(position_size),
+                reduceOnly=True  # chỉ đóng, không mở thêm
+            )
 
-        # Tạo lệnh đóng vị thế ngay lập tức
-        self.client.futures_create_order(
-            symbol=symbol,
-            side=close_side,
-            type="MARKET",
-            quantity=abs(position_size),
-            reduceOnly=True  # chỉ đóng, không mở thêm
-        )
-
-        logging.info(f"✅ Đã đóng vị thế {symbol} ({reason}) với giá {mark_price}")
+            logging.info(f"✅ Đã đóng vị thế {symbol} ({reason}) với giá {mark_price}")
 
     def _create_tp_sl_limit_orders(self, symbol, side, entry_price, quantity):
         """
