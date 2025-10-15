@@ -135,7 +135,7 @@ class PatternScanner:
 
         # Chỉ xử lý khi chỉ có 1 râu
         # Râu trên dài
-        if upper_ratio >= wick_ratio and upper_wick > 0 and close_price == low_price:
+        if upper_ratio >= wick_ratio and upper_wick > 0 and open_price == low_price:
             if is_bearish:
                 signal = "BUY"
                 reason = f"Nến giảm có râu trên dài ({upper_ratio:.2f}x thân)"
@@ -144,7 +144,7 @@ class PatternScanner:
                 reason = f"Nến tăng có râu trên dài ({upper_ratio:.2f}x thân)"
 
         # Râu dưới dài
-        elif lower_ratio >= wick_ratio and lower_wick > 0 and close_price == high_price:
+        elif lower_ratio >= wick_ratio and lower_wick > 0 and open_price == high_price:
             if is_bearish:
                 signal = "SELL"
                 reason = f"Nến giảm có râu dưới dài ({lower_ratio:.2f}x thân)"
