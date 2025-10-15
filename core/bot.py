@@ -88,7 +88,7 @@ class CandlePatternScannerBot:
             logging.info(f"✅ MSG data: {data})")
             entry_price = float(data['ap'])
             if data['R']:
-                self.binance_watcher.close_order(data)
+                self.binance_watcher.close_order(data, symbol)
             else:
                 self.binance_watcher._create_tp_sl_limit_orders(
                     symbol, side, entry_price, quantity)

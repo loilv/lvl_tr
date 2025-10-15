@@ -64,7 +64,8 @@ class BinanceOrderWatcher:
         self.active_orders[symbol] = {'id': order_id, 'price': price, 'time': time.time()}
         logging.info(f"✅ Đã khớp {self.active_orders}")
 
-    def close_order(self, data):
+    def close_order(self, data, symbol: str = None):
+        self.client.futures_cancel_all_open_orders(symbol=symbol)
         self.trading_logger.info(
             f"ĐÓNG LỆNH | {data['s']} | "
             f"Kết quả: {'WIN' if data['ot'] == 'TAKE_PROFIT' else 'LOSS'} | "
