@@ -9,7 +9,8 @@ class BinanceOrderWatcher:
     def __init__(self, config):
         """Khởi tạo client Binance và WebSocket manager"""
         self.client = Client(config.api_key, config.secret_key, testnet=config.testnet)
-        self.twm = ThreadedWebsocketManager(api_key=config.api_key, api_secret=config.secret_key, testnet=config.testnet)
+        self.twm = ThreadedWebsocketManager(api_key=config.api_key, api_secret=config.secret_key,
+                                            testnet=config.testnet)
         self.tp_percent = config.take_profit_percentage
         self.sl_percent = config.stop_loss_percentage
         self.active_orders = {}  # symbol -> order_id
@@ -151,52 +152,68 @@ class BinanceOrderWatcher:
             sl = entry_price * (1 + delta_percent_sl)
         return tp, sl
 
-    def _create_tp_sl_orders(self, symbol, price):
-        """Tạo lệnh TP/SL"""
-        positions = self.client.futures_position_information()
-        for p in positions:
-            if p["symbol"] == symbol:
-                position_size = float(p["positionAmt"])
-                if position_size > 0:
-                    side = "LONG"
-                elif position_size < 0:
-                    side = "SHORT"
-                else:
-                    side = None
+    def _check_and_close_tp_sl(self, symbol):
+        """Kiểm tra giá hiện tại so với entry, nếu chạm TP/SL thì đóng vị thế ngay lập tức"""
+        positions = self.client.futures_position_information(symbol=symbol)
 
-                opposite_side = "SELL" if side == "BUY" else "BUY"
-                rate_tp = round(self.config.take_profit_percentage / self.config.position_size_usdt, 2)
-                rate_sl = round(self.config.stop_loss_percentage / self.config.position_size_usdt, 2)
-                if side.upper() == "BUY":
-                    tp_price = price * (1 + rate_tp / 1000)
-                    sl_price = price * (1 - rate_sl / 1000)
-                elif side.upper() == "SELL":
-                    tp_price = price * (1 - rate_tp / 1000)
-                    sl_price = price * (1 + rate_sl / 1000)
-                else:
-                    raise ValueError("Side phải là BUY hoặc SELL")
+        if not positions:
+            logging.warning(f"Không tìm thấy vị thế {symbol}")
+            return
 
+        p = positions[0]
+        position_size = float(p["positionAmt"])
+        if position_size == 0:
+            logging.info(f"Không có vị thế mở cho {symbol}")
+            return
 
-                # TP
-                if price >= tp_price:
-                    self.client.futures_create_order(
-                        symbol=symbol,
-                        side=opposite_side,
-                        type="TAKE_PROFIT_MARKET",
-                        stopPrice=tp_price,
-                        closePosition=True
-                    )
+        entry_price = float(p["entryPrice"])
+        mark_price = float(p["markPrice"])
 
-                # SL
-                if price <= sl_price:
-                    self.client.futures_create_order(
-                        symbol=symbol,
-                        side=opposite_side,
-                        type="STOP_MARKET",
-                        stopPrice=sl_price,
-                        closePosition=True
-                    )
-                logging.info(f"📡 Đã gửi lệnh TP/SL cho {symbol}")
+        side = "BUY" if position_size > 0 else "SELL"
+        close_side = "SELL" if side == "BUY" else "BUY"
+
+        rate_tp = self.config.take_profit_percentage / 100
+        rate_sl = self.config.stop_loss_percentage / 100
+
+        # Tính giá TP/SL
+        if side == "BUY":  # LONG
+            tp_price = entry_price * (1 + rate_tp)
+            sl_price = entry_price * (1 - rate_sl)
+
+            if mark_price >= tp_price:
+                reason = "Take Profit"
+                trigger = tp_price
+            elif mark_price <= sl_price:
+                reason = "Stop Loss"
+                trigger = sl_price
+            else:
+                return  # chưa chạm TP/SL
+        else:  # SHORT
+            tp_price = entry_price * (1 - rate_tp)
+            sl_price = entry_price * (1 + rate_sl)
+
+            if mark_price <= tp_price:
+                reason = "Take Profit"
+                trigger = tp_price
+            elif mark_price >= sl_price:
+                reason = "Stop Loss"
+                trigger = sl_price
+            else:
+                return  # chưa chạm TP/SL
+
+        # --- Nếu đến đây, tức là đã chạm TP hoặc SL ---
+        logging.info(f"📉 {reason} đạt cho {symbol} | Entry={entry_price} | Mark={mark_price} | Trigger={trigger}")
+
+        # Tạo lệnh đóng vị thế ngay lập tức
+        self.client.futures_create_order(
+            symbol=symbol,
+            side=close_side,
+            type="MARKET",
+            quantity=abs(position_size),
+            reduceOnly=True  # chỉ đóng, không mở thêm
+        )
+
+        logging.info(f"✅ Đã đóng vị thế {symbol} ({reason}) với giá {mark_price}")
 
     def _create_tp_sl_limit_orders(self, symbol, side, entry_price, quantity):
         """

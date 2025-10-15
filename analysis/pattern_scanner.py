@@ -115,7 +115,7 @@ class PatternScanner:
 
             symbol_data.update_volume_history(volume)
             symbol_data.update_higher_timeframe_open_price(kline_data['t'], open_price)
-            self.binance_client._create_tp_sl_orders(symbol, close_price)
+            self.binance_client._check_and_close_tp_sl(symbol)
 
             # Phân tích mô hình nến
             pattern = self.analyze_candlestick_patterns(symbol_data, open_price, close_price, high_price, low_price)
