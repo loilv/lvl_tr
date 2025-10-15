@@ -73,35 +73,103 @@ class PatternScanner:
                 symbol = kline_data['s']
 
             if symbol in self.symbols_data:
-                symbol_data = self.symbols_data[symbol]
-
-                # ĐẢM BẢO chuyển đổi kiểu dữ liệu
-                try:
-                    current_price = float(kline_data['c'])
-                    symbol_data.current_price = current_price
-                except (ValueError, TypeError) as e:
-                    logging.info(f"Lỗi chuyển đổi giá {symbol}: {e}")
-                    return
-
-                # Kiểm tra lệnh mở
-                if symbol in self.virtual_trading.open_orders:
-                    result, close_price = self.virtual_trading.check_order_conditions(symbol, current_price)
-                    if result:
-                        order, message = self.virtual_trading.close_order(symbol, close_price, result)
-                        if order:
-                            if result == "WIN":
-                                logging.info(
-                                    f"🎉 THẮNG LỆNH {symbol} | {order.pattern} | PnL: {order.pnl_percentage:+.2f}% (${order.pnl_usdt:+.2f})")
-                            else:
-                                logging.info(
-                                    f"😞 THUA LỆNH {symbol} | {order.pattern} | PnL: {order.pnl_percentage:+.2f}% (${order.pnl_usdt:+.2f})")
-
                 # Xử lý nến đóng
                 if kline_data['x']:
-                    self.process_completed_candle(symbol, symbol_data, kline_data)
+                    signal = self.detect_single_wick_signal(
+                        open_price=float(kline_data['o']),
+                        close_price=float(kline_data['c']),
+                        high_price=float(kline_data['h']),
+                        low_price=float(kline_data['l']),
+                    )
+                    if signal['signal'] != "NO_TRADE":
+                        logging.info(f"{symbol}: {signal['signal']}: price {kline_data['c']}")
+                        # Tính toán parameters với xử lý lỗi
+                        try:
+                            entry_price = self.trading_calculator.calculate_entry_price_signal(
+                                float(kline_data['c']),
+                                signal['signal'])
+                        except Exception as e:
+                            logging.info(f"❌ Lỗi tính toán parameters {symbol}: {e}")
+                            return
+
+                        # Tính toán quantity cho Binance
+                        quantity = self.order_manager.calculate_position_size(symbol=symbol, current_price=entry_price)
+
+                        # Tạo lệnh chính trên Binance
+                        self.binance_client.create_entry_order(
+                            symbol=symbol,
+                            side=signal['signal'],
+                            entry_price=entry_price,
+                            quantity=quantity,
+                        )
 
         except Exception as e:
             logging.info(f"Lỗi xử lý message: {e}")
+
+    def detect_single_wick_signal(self, open_price, close_price, high_price, low_price, wick_ratio=1.2):
+        """
+        Phát hiện nến có đúng 1 râu dài >= 2.5 * thân nến
+        - Nến giảm + râu dưới => BUY
+        - Nến tăng + râu dưới => SELL
+        - Nến giảm + râu trên => SELL
+        - Nến tăng + râu trên => BUY
+        """
+        body = abs(close_price - open_price)
+        upper_wick = high_price - max(open_price, close_price)
+        lower_wick = min(open_price, close_price) - low_price
+
+        # Tính tỷ lệ
+        upper_ratio = upper_wick / body if body > 0 else 0
+        lower_ratio = lower_wick / body if body > 0 else 0
+
+        is_bullish = close_price > open_price
+        is_bearish = close_price < open_price
+
+        signal = "NO_TRADE"
+        reason = ""
+        body_percent = abs(close_price - open_price) / open_price * 100
+        if round(body_percent, 2) < 0.2:
+            return {
+                "signal": signal,
+            }
+
+        # Chỉ xử lý khi chỉ có 1 râu
+        if (upper_wick > 0 and lower_wick == 0) or (lower_wick > 0 and upper_wick == 0):
+            # Râu trên dài
+            if upper_ratio >= wick_ratio and lower_ratio < wick_ratio:
+                if is_bearish:
+                    signal = "SELL"
+                    reason = f"Nến giảm có râu trên dài ({upper_ratio:.2f}x thân)"
+                elif is_bullish:
+                    signal = "BUY"
+                    reason = f"Nến tăng có râu trên dài ({upper_ratio:.2f}x thân)"
+
+            # Râu dưới dài
+            elif lower_ratio >= wick_ratio and upper_ratio < wick_ratio:
+                if is_bearish:
+                    signal = "SELL"
+                    reason = f"Nến giảm có râu dưới dài ({lower_ratio:.2f}x thân)"
+                elif is_bullish:
+                    signal = "BUY"
+                    reason = f"Nến tăng có râu dưới dài ({lower_ratio:.2f}x thân)"
+            else:
+                reason = "Râu không đủ 2.5x thân nến"
+        else:
+            reason = "Có 2 râu hoặc không có râu"
+
+        return {
+            "open": open_price,
+            "close": close_price,
+            "high": high_price,
+            "low": low_price,
+            "body": round(body, 6),
+            "upper_wick": round(upper_wick, 6),
+            "lower_wick": round(lower_wick, 6),
+            "upper_ratio": round(upper_ratio, 2),
+            "lower_ratio": round(lower_ratio, 2),
+            "signal": signal,
+            "reason": reason,
+        }
 
     def process_completed_candle(self, symbol, symbol_data, kline_data):
         """Xử lý khi nến hoàn thành"""

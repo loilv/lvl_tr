@@ -19,6 +19,18 @@ class TradingCalculator:
         else:
             return current_price
 
+    def calculate_entry_price_signal(self, current_price, signal):
+        """Tính giá entry hợp lý theo hướng mô hình"""
+        offset = self.config.entry_price_offset / 100
+        if signal == 'BUY':
+            # Kỳ vọng tăng → chờ giá hồi thấp hơn một chút để buy
+            return current_price * (1 + offset)
+        elif signal == 'SELL':
+            # Kỳ vọng giảm → chờ giá hồi cao hơn một chút để sell
+            return current_price * (1 - offset)
+        else:
+            return current_price
+
     def calculate_stop_loss(self, entry_price, pattern, leverage):
         """Tính SL dựa trên % ROI và đòn bẩy"""
         roi_stop = self.config.stop_loss_percentage / 100
