@@ -151,29 +151,52 @@ class BinanceOrderWatcher:
             sl = entry_price * (1 + delta_percent_sl)
         return tp, sl
 
-    def _create_tp_sl_orders(self, symbol, side, tp_price, sl_price):
+    def _create_tp_sl_orders(self, symbol, price):
         """Tạo lệnh TP/SL"""
-        opposite_side = "SELL" if side == "BUY" else "BUY"
-        tp_price = self._format_price(symbol, tp_price)
-        sl_price = self._format_price(symbol, sl_price)
+        positions = self.client.futures_position_information()
+        for p in positions:
+            if p["symbol"] == symbol:
+                position_size = float(p["positionAmt"])
+                if position_size > 0:
+                    side = "LONG"
+                elif position_size < 0:
+                    side = "SHORT"
+                else:
+                    side = None
 
-        # TP
-        self.client.futures_create_order(
-            symbol=symbol,
-            side=opposite_side,
-            type="TAKE_PROFIT_MARKET",
-            stopPrice=tp_price,
-            closePosition=True
-        )
-        # SL
-        self.client.futures_create_order(
-            symbol=symbol,
-            side=opposite_side,
-            type="STOP_MARKET",
-            stopPrice=sl_price,
-            closePosition=True
-        )
-        logging.info(f"📡 Đã gửi lệnh TP/SL cho {symbol}")
+                opposite_side = "SELL" if side == "BUY" else "BUY"
+                rate_tp = round(self.config.take_profit_percentage / self.config.position_size_usdt, 2)
+                rate_sl = round(self.config.stop_loss_percentage / self.config.position_size_usdt, 2)
+                if side.upper() == "BUY":
+                    tp_price = price * (1 + rate_tp / 1000)
+                    sl_price = price * (1 - rate_sl / 1000)
+                elif side.upper() == "SELL":
+                    tp_price = price * (1 - rate_tp / 1000)
+                    sl_price = price * (1 + rate_sl / 1000)
+                else:
+                    raise ValueError("Side phải là BUY hoặc SELL")
+
+
+                # TP
+                if price >= tp_price:
+                    self.client.futures_create_order(
+                        symbol=symbol,
+                        side=opposite_side,
+                        type="TAKE_PROFIT_MARKET",
+                        stopPrice=tp_price,
+                        closePosition=True
+                    )
+
+                # SL
+                if price <= sl_price:
+                    self.client.futures_create_order(
+                        symbol=symbol,
+                        side=opposite_side,
+                        type="STOP_MARKET",
+                        stopPrice=sl_price,
+                        closePosition=True
+                    )
+                logging.info(f"📡 Đã gửi lệnh TP/SL cho {symbol}")
 
     def _create_tp_sl_limit_orders(self, symbol, side, entry_price, quantity):
         """
