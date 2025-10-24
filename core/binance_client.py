@@ -1,7 +1,7 @@
 import time
 from binance import ThreadedWebsocketManager, Client
-from .order_manager import OrderBinanceManager
 import logging
+import queue
 from logging.handlers import RotatingFileHandler
 
 
@@ -11,15 +11,54 @@ class BinanceOrderWatcher:
         self.client = Client(config.api_key, config.secret_key, testnet=config.testnet)
         self.twm = ThreadedWebsocketManager(api_key=config.api_key, api_secret=config.secret_key,
                                             testnet=config.testnet)
-        self.tp_percent = config.take_profit_percentage
-        self.sl_percent = config.stop_loss_percentage
         self.active_orders = {}  # symbol -> order_id
-        self.order_manager = OrderBinanceManager(config)
         self.config = config
-        self.leverage = config.leverage
         self.trading_logger = None
         self.setup_trading_logger()
         self.pre_order = {}
+        self.message_queue = queue.Queue()
+        self.leverage = config.leverage
+
+    def get_most_volatile_symbols(self, top_n=50, min_volume_usdt=10_000_000):
+        """
+        Lấy 50 coin Futures có biến động mạnh nhất (tăng/giảm)
+        và khối lượng giao dịch lớn nhất trong 24h.
+        """
+        tickers = self.client.futures_ticker()
+
+        # Lọc chỉ lấy các cặp USDT (loại bỏ coin margin)
+        tickers = [t for t in tickers if t['symbol'].endswith('USDT')]
+
+        processed = []
+        for t in tickers:
+            try:
+                change = float(t.get('priceChangePercent', 0))
+                volume = float(t.get('volume', 0))
+                last_price = float(t.get('lastPrice', 0))
+
+                # Tính volume theo USDT (giá * khối lượng)
+                volume_usdt = volume * last_price
+
+                # Bỏ qua coin volume thấp
+                if volume_usdt < min_volume_usdt:
+                    continue
+
+                processed.append({
+                    'symbol': t['symbol'],
+                    'priceChangePercent': change,
+                    'volume_usdt': volume_usdt
+                })
+            except Exception:
+                continue
+
+        # Sắp xếp theo biến động %
+        top_gainers = sorted(processed, key=lambda x: x['priceChangePercent'], reverse=True)[:top_n]
+        top_losers = sorted(processed, key=lambda x: x['priceChangePercent'])[:top_n]
+
+        return {
+            "gainers": [t['symbol'] for t in top_gainers],
+            "losers": [t['symbol'] for t in top_losers]
+        }
 
     def setup_trading_logger(self):
         """Thiết lập logger cho trading"""
@@ -43,7 +82,7 @@ class BinanceOrderWatcher:
         """Format quantity theo step size của symbol"""
         try:
             # Lấy thông tin symbol từ exchange info
-            exchange_info = self.order_manager._get_exchange_info()
+            exchange_info = self.client.futures_exchange_info()
             if not exchange_info:
                 return round(quantity, 3)
 
@@ -61,23 +100,10 @@ class BinanceOrderWatcher:
         except Exception as e:
             return round(quantity, 3)
 
-    def set_active_orders(self, symbol, order_id, price):
-        self.active_orders[symbol] = {'id': order_id, 'price': price, 'time': time.time()}
-        logging.info(f"✅ Đã khớp {self.active_orders}")
-
-    def close_order(self, data, symbol: str = None):
-        self.client.futures_cancel_all_open_orders(symbol=symbol)
-        self.trading_logger.info(
-            f"ĐÓNG LỆNH | {data['s']} | "
-            f"Kết quả: {'WIN' if data['ot'] == 'TAKE_PROFIT' else 'LOSS'} | "
-            f"Loại: {data['ot']} | "
-            f"Thời gian: {data['T']}"
-        )
-
     def _format_price(self, symbol: str, price: float) -> float:
         """Format price theo tick size của symbol"""
         try:
-            exchange_info = self.order_manager._get_exchange_info()
+            exchange_info = self.client.futures_exchange_info()
             if not exchange_info:
                 return round(price, 2)
 
@@ -95,17 +121,47 @@ class BinanceOrderWatcher:
         except Exception as e:
             return round(price, 2)
 
+    def close_order_tp(self, symbol, mark_price, reverse_side):
+        entry_price = self._format_price(symbol, mark_price)
+        self.client.futures_create_order(
+            symbol=symbol,
+            side=reverse_side,
+            type="TAKE_PROFIT_MARKET",
+            stopPrice=entry_price,
+            closePosition=True
+        )
+
+    def close_order_sl(self, symbol, reverse_side):
+        self.client.futures_create_order(
+            symbol=symbol,
+            side=reverse_side,
+            type="MARKET",
+            closePosition=True
+        )
+
+    def close_position(self, symbol):
+        position_info = self.client.futures_position_information(symbol=symbol)
+        position_amt = float(position_info[0]['positionAmt'])
+
+        # Nếu có vị thế thì đóng
+        if position_amt != 0:
+            side = "SELL" if position_amt > 0 else "BUY"  # Nếu đang LONG thì SELL để đóng, nếu SHORT thì BUY để đóng
+            quantity = abs(position_amt)
+
+            order = self.client.futures_create_order(
+                symbol=symbol,
+                side=side,
+                type="MARKET",
+                quantity=quantity,
+                reduceOnly=True  # ⚡ đảm bảo chỉ đóng vị thế, không mở thêm
+            )
+
+            logging.info("✅ Đã đóng lệnh Market:", order)
+        else:
+            logging.info("⚠️ Không có vị thế mở để đóng.")
+
     def create_entry_order(self, symbol, side, entry_price, quantity, order_type="LIMIT", pattern=None):
         """Tạo lệnh entry (LIMIT hoặc MARKET)"""
-        positions = self.client.futures_position_information()
-        if any(p["symbol"] == symbol and abs(float(p["positionAmt"])) > 0 for p in positions):
-            logging.info(f"Đã tồn tại lệnh order {symbol}")
-            return
-
-        logging.info(f"Order active {len(positions)}/{self.config.max_open_orders}")
-        if len(positions) >= self.config.max_open_orders:
-            logging.info(f"Đã đạt lệnh tối đa")
-            return
 
         self.client.futures_change_leverage(symbol=symbol, leverage=self.leverage)
         logging.info(f"🟢 Gửi lệnh {order_type} {side} {symbol} tại {entry_price}")
@@ -120,22 +176,28 @@ class BinanceOrderWatcher:
                 quantity=quantity
             )
         else:
+            logging.info(quantity)
+            logging.info({
+                'symbol': symbol,
+                'side': side,
+                'type': "LIMIT",
+                'price': entry_price,
+                'quantity': quantity,
+                'timeInForce': "GTC"
+            })
             order = self.client.futures_create_order(
                 symbol=symbol,
                 side=side,
                 type="LIMIT",
-                price=str(entry_price),
+                price=entry_price,
                 quantity=quantity,
                 timeInForce="GTC"
             )
 
         self.trading_logger.info(
             f"MỞ LỆNH | {symbol} | "
-            f"MÔ HÌNH: {pattern} | GÍA: {entry_price:.6f} | "
             f"Thời gian: {time.time()}"
         )
-        self.pre_order[symbol] = order
-        self.active_orders[symbol] = {}
         return order
 
     def _calculate_tp_sl(self, entry_price, side):
@@ -152,67 +214,56 @@ class BinanceOrderWatcher:
             sl = entry_price * (1 + delta_percent_sl)
         return tp, sl
 
-    def _check_and_close_tp_sl(self, symbol):
-        """Kiểm tra giá hiện tại so với entry, nếu chạm TP/SL thì đóng vị thế ngay lập tức"""
-        positions = self.client.futures_position_information()
-        if not positions:
-            logging.warning(f"Không tìm thấy vị thế {symbol}")
-            return
-        for p in positions:
-            logging.info(f'Vị thế: {p}')
-            position_size = float(p["positionAmt"])
-            if position_size == 0:
-                logging.info(f"Không có vị thế mở cho {symbol}")
-                return
+    def _create_tp_sl_orders(self, symbol, side, tp_price, sl_price):
+        """Tạo lệnh TP/SL"""
+        opposite_side = "SELL" if side == "BUY" else "BUY"
+        tp_price = self._format_price(symbol, tp_price)
+        sl_price = self._format_price(symbol, sl_price)
 
-            entry_price = float(p["entryPrice"])
-            mark_price = float(p["markPrice"])
+        # TP
+        self.client.futures_create_order(
+            symbol=symbol,
+            side=opposite_side,
+            type="TAKE_PROFIT_MARKET",
+            stopPrice=tp_price,
+            closePosition=True
+        )
+        # SL
+        self.client.futures_create_order(
+            symbol=symbol,
+            side=opposite_side,
+            type="STOP_MARKET",
+            stopPrice=sl_price,
+            closePosition=True
+        )
+        logging.info(f"📡 Đã gửi lệnh TP/SL cho {symbol}")
 
-            side = "BUY" if position_size > 0 else "SELL"
-            close_side = "SELL" if side == "BUY" else "BUY"
-
-            rate_tp = self.config.take_profit_percentage / 100
-            rate_sl = self.config.stop_loss_percentage / 100
-
-            # Tính giá TP/SL
-            if side == "BUY":  # LONG
-                tp_price = entry_price * (1 + rate_tp)
-                sl_price = entry_price * (1 - rate_sl)
-
-                if mark_price >= tp_price:
-                    reason = "Take Profit"
-                    trigger = tp_price
-                elif mark_price <= sl_price:
-                    reason = "Stop Loss"
-                    trigger = sl_price
-                else:
-                    return  # chưa chạm TP/SL
-            else:  # SHORT
-                tp_price = entry_price * (1 - rate_tp)
-                sl_price = entry_price * (1 + rate_sl)
-
-                if mark_price <= tp_price:
-                    reason = "Take Profit"
-                    trigger = tp_price
-                elif mark_price >= sl_price:
-                    reason = "Stop Loss"
-                    trigger = sl_price
-                else:
-                    return  # chưa chạm TP/SL
-
-            # --- Nếu đến đây, tức là đã chạm TP hoặc SL ---
-            logging.info(f"📉 {reason} đạt cho {symbol} | Entry={entry_price} | Mark={mark_price} | Trigger={trigger}")
-
-            # Tạo lệnh đóng vị thế ngay lập tức
+    def close_and_reverse(self, symbol, side, qty, reorder=False):
+        """Đóng lệnh hiện tại và mở lệnh ngược chiều."""
+        try:
+            # 1️⃣ Đóng lệnh hiện tại
+            opposite_side = "SELL" if side == "BUY" else "BUY"
             self.client.futures_create_order(
                 symbol=symbol,
-                side=close_side,
+                side=opposite_side,
                 type="MARKET",
-                quantity=abs(position_size),
-                reduceOnly=True  # chỉ đóng, không mở thêm
+                quantity=abs(qty)
             )
+            print(f"Đã đóng vị thế {side} {qty} {symbol}")
 
-            logging.info(f"✅ Đã đóng vị thế {symbol} ({reason}) với giá {mark_price}")
+            if reorder:
+                # 2️⃣ Mở lệnh ngược lại
+                quantity = self._format_quantity(symbol, qty)
+                self.client.futures_create_order(
+                    symbol=symbol,
+                    side=opposite_side,
+                    type="MARKET",
+                    quantity=quantity
+                )
+                print(f"Đã mở vị thế ngược lại ({side}) {qty} {symbol}")
+
+        except Exception as e:
+            print(f"Lỗi khi đảo chiều: {e}")
 
     def _create_tp_sl_limit_orders(self, symbol, side, entry_price, quantity):
         """
@@ -233,13 +284,13 @@ class BinanceOrderWatcher:
         if side.upper() == "BUY":
             tp_price = entry_price * (1 + rate_tp / 1000)
             sl_price = entry_price * (1 - rate_sl / 1000)
-            tp_trigger = tp_price * 1.001
-            sl_trigger = sl_price * 0.999
+            tp_trigger = tp_price * 0.999
+            sl_trigger = sl_price * 1.001
         elif side.upper() == "SELL":
             tp_price = entry_price * (1 - rate_tp / 1000)
             sl_price = entry_price * (1 + rate_sl / 1000)
-            tp_trigger = tp_price * 0.999
-            sl_trigger = sl_price * 1.001
+            tp_trigger = tp_price * 1.001
+            sl_trigger = sl_price * 0.999
         else:
             raise ValueError("Side phải là BUY hoặc SELL")
 
@@ -250,6 +301,14 @@ class BinanceOrderWatcher:
         sl_trigger = self._format_price(symbol, sl_trigger)
 
         # --- Lệnh TAKE_PROFIT_LIMIT ---
+        # self.client.futures_create_order(
+        #     symbol=symbol,
+        #     side=opposite_side,
+        #     type="TAKE_PROFIT_MARKET",
+        #     stopPrice=tp_price,
+        #     closePosition=True
+        # )
+
         self.client.futures_create_order(
             symbol=symbol,
             side=opposite_side,
@@ -262,20 +321,20 @@ class BinanceOrderWatcher:
             reduceOnly=True
         )
 
-        # --- Lệnh STOP_LIMIT ---
-        self.client.futures_create_order(
-            symbol=symbol,
-            side=opposite_side,
-            type="STOP",
-            quantity=quantity,
-            price=sl_price,
-            stopPrice=sl_trigger,
-            timeInForce="GTC",
-            workingType="MARK_PRICE",
-            reduceOnly=True
-        )
+        # # --- Lệnh STOP_LIMIT ---
+        # self.client.futures_create_order(
+        #     symbol=symbol,
+        #     side=opposite_side,
+        #     type="STOP",
+        #     quantity=quantity,
+        #     price=sl_price,
+        #     stopPrice=sl_trigger,
+        #     timeInForce="GTC",
+        #     workingType="MARK_PRICE",
+        #     reduceOnly=True
+        # )
 
-        logging.info(f"📡 Đã gửi lệnh TP/SL (LIMIT) cho {symbol} - TP: {tp_price}, SL: {sl_price}, Quantity: {quantity}")
+        logging.info(f"📡 Đã gửi lệnh TP/SL (LIMIT) cho {symbol} - TP: {tp_price}")
 
     def stop(self):
         """Dừng WebSocket"""

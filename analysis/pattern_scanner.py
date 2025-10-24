@@ -61,6 +61,15 @@ class PatternScanner:
                 self.symbols_data[symbol] = SymbolData(symbol, self.config.timeframe)
             logging.info(f"📊 Sử dụng {len(test_pairs)} cặp test")
 
+    def calculate_range_and_change(self, open_price, high, low, close):
+        range_percent = ((high - low) / low) * 100
+        change_percent = ((close - open_price) / open_price) * 100
+
+        return {
+            'range_percent': round(range_percent, 2),
+            'change_percent': round(change_percent, 2)
+        }
+
     def process_message(self, message):
         """Xử lý tin nhắn từ WebSocket"""
         try:
@@ -73,40 +82,105 @@ class PatternScanner:
                 symbol = kline_data['s']
 
             if symbol in self.symbols_data:
+                open_price = float(kline_data['o'])
+                close_price = float(kline_data['c'])
+                high_price = float(kline_data['h'])
+                low_price = float(kline_data['l'])
+                start_time = int(kline_data['t'])
+                end_time = int(kline_data['T'])
+
+                on = high_price - max(open_price, close_price)
+                both = min(open_price, close_price) - low_price
+                current_time = int(time.time() * 1000)
+                percentage = ((current_time - start_time) / (end_time - start_time)) * 100
+                ratio_candlestick = self.calculate_candle_range_percent(high_price, low_price)
+
+                if round(percentage) <= 30:
+                    if on > 0 and close_price < open_price:
+                        logging.info(f"Tín hiệu: {symbol} | SELL | {close_price} | ở {percentage:.2f}%")
+
+                    elif (on == 0 or on <= 10) and both and round(ratio_candlestick, 1) > 2.5:
+                        logging.info(f"Tín hiệu: {symbol} | BUY | {close_price} | ở {percentage:.2f}%")
+
+                    elif (both == 0 or both <= 10) and on and round(ratio_candlestick, 1) > 2.5:
+                        logging.info(f"Tín hiệu: {symbol} | SELL | {close_price} | ở {percentage:.2f}%")
+
+                # result = self.handle_signal(open_price, close_price, high_price, low_price, close_price)
+
                 # Xử lý nến đóng
-                if kline_data['x']:
-                    signal = self.detect_single_wick_signal(
-                        open_price=float(kline_data['o']),
-                        close_price=float(kline_data['c']),
-                        high_price=float(kline_data['h']),
-                        low_price=float(kline_data['l']),
-                    )
-                    if signal['signal'] != "NO_TRADE":
-                        logging.info(f"{symbol}: {signal['signal']}: price {kline_data['c']}")
-                        # Tính toán parameters với xử lý lỗi
-                        try:
-                            entry_price = self.trading_calculator.calculate_entry_price_signal(
-                                float(kline_data['c']),
-                                signal['signal'])
-                        except Exception as e:
-                            logging.info(f"❌ Lỗi tính toán parameters {symbol}: {e}")
-                            return
-
-                        # Tính toán quantity cho Binance
-                        quantity = self.order_manager.calculate_position_size(symbol=symbol, current_price=entry_price)
-
-                        # Tạo lệnh chính trên Binance
-                        self.binance_client.create_entry_order(
-                            symbol=symbol,
-                            side=signal['signal'],
-                            entry_price=entry_price,
-                            quantity=quantity,
-                        )
+                # if kline_data['x']:
+                #     signal = self.detect_single_wick_signal(
+                #         open_price=float(kline_data['o']),
+                #         close_price=float(kline_data['c']),
+                #         high_price=float(kline_data['h']),
+                #         low_price=float(kline_data['l']),
+                #     )
+                #     if signal['signal'] != "NO_TRADE":
+                #         logging.info(f"{symbol}: {signal['signal']}: price {kline_data['c']}")
+                #         # Tính toán parameters với xử lý lỗi
+                #         try:
+                #             entry_price = self.trading_calculator.calculate_entry_price_signal(
+                #                 float(kline_data['c']),
+                #                 signal['signal'])
+                #         except Exception as e:
+                #             logging.info(f"❌ Lỗi tính toán parameters {symbol}: {e}")
+                #             return
+                #
+                #         # Tính toán quantity cho Binance
+                #         quantity = self.order_manager.calculate_position_size(symbol=symbol, current_price=entry_price)
+                #
+                #         # Tạo lệnh chính trên Binance
+                #         self.binance_client.create_entry_order(
+                #             symbol=symbol,
+                #             side=signal['signal'],
+                #             entry_price=entry_price,
+                #             quantity=quantity,
+                #         )
 
         except Exception as e:
             logging.info(f"Lỗi xử lý message: {e}")
 
-    def detect_single_wick_signal(self, open_price, close_price, high_price, low_price, wick_ratio=1.2):
+    def analyze_candle_and_trade(self, open_price, close_price, high_price, low_price, current_price):
+        """
+        Phân tích nến hiện tại:
+        - Xác định nến tăng hay giảm.
+        - So sánh giá hiện tại với biên độ nến.
+        - Nếu lệch 5% biên độ thì vào lệnh ngược.
+        """
+        # Tránh lỗi chia 0
+        if high_price == low_price:
+            return {"signal": "NO_TRADE", "reason": "Nến không có biên độ"}
+
+        candle_range = high_price - low_price
+        is_bullish = close_price > open_price
+        is_bearish = close_price < open_price
+
+        # Tính tỉ lệ vị trí giá hiện tại trong biên nến
+        pos_ratio = (current_price - low_price) / candle_range  # 0 = đáy, 1 = đỉnh
+
+        signal = "NO_TRADE"
+        reason = ""
+
+        if is_bullish:  # Nến tăng
+            if pos_ratio >= 0.95:  # gần đỉnh
+                signal = "SELL"
+                reason = f"Giá hiện tại gần đỉnh (>{pos_ratio:.2%}) của nến tăng"
+        elif is_bearish:  # Nến giảm
+            if pos_ratio <= 0.05:  # gần đáy
+                signal = "BUY"
+                reason = f"Giá hiện tại gần đáy (<{pos_ratio:.2%}) của nến giảm"
+        else:
+            reason = "Nến doji (không rõ hướng)"
+
+        return {
+            "is_bullish": is_bullish,
+            "is_bearish": is_bearish,
+            "pos_ratio": round(pos_ratio, 4),
+            "signal": signal,
+            "reason": reason,
+        }
+
+    def detect_single_wick_signal(self, open_price, close_price, high_price, low_price, wick_ratio=1.5):
         """
         Phát hiện nến có đúng 1 râu dài >= 2.5 * thân nến
         - Nến giảm + râu dưới => BUY
@@ -125,6 +199,7 @@ class PatternScanner:
         is_bullish = close_price > open_price
         is_bearish = close_price < open_price
 
+
         signal = "NO_TRADE"
         reason = ""
         body_percent = abs(close_price - open_price) / open_price * 100
@@ -134,25 +209,28 @@ class PatternScanner:
             }
 
         # Chỉ xử lý khi chỉ có 1 râu
-        # Râu trên dài
-        if upper_ratio >= wick_ratio and upper_wick > 0 and open_price == low_price:
-            if is_bearish:
-                signal = "BUY"
-                reason = f"Nến giảm có râu trên dài ({upper_ratio:.2f}x thân)"
-            elif is_bullish:
-                signal = "SELL"
-                reason = f"Nến tăng có râu trên dài ({upper_ratio:.2f}x thân)"
+        if (upper_wick > 0 and lower_wick == 0) or (lower_wick > 0 and upper_wick == 0):
+            # Râu trên dài
+            if upper_ratio >= wick_ratio and lower_ratio < wick_ratio:
+                if is_bearish:
+                    signal = "SELL"
+                    reason = f"Nến giảm có râu trên dài ({upper_ratio:.2f}x thân)"
+                elif is_bullish:
+                    signal = "BUY"
+                    reason = f"Nến tăng có râu trên dài ({upper_ratio:.2f}x thân)"
 
-        # Râu dưới dài
-        elif lower_ratio >= wick_ratio and lower_wick > 0 and open_price == high_price:
-            if is_bearish:
-                signal = "SELL"
-                reason = f"Nến giảm có râu dưới dài ({lower_ratio:.2f}x thân)"
-            elif is_bullish:
-                signal = "BUY"
-                reason = f"Nến tăng có râu dưới dài ({lower_ratio:.2f}x thân)"
+            # Râu dưới dài
+            elif lower_ratio >= wick_ratio and upper_ratio < wick_ratio:
+                if is_bearish:
+                    signal = "SELL"
+                    reason = f"Nến giảm có râu dưới dài ({lower_ratio:.2f}x thân)"
+                elif is_bullish:
+                    signal = "BUY"
+                    reason = f"Nến tăng có râu dưới dài ({lower_ratio:.2f}x thân)"
+            else:
+                reason = "Râu không đủ 2.5x thân nến"
         else:
-            reason = ""
+            reason = "Có 2 râu hoặc không có râu"
 
         return {
             "open": open_price,
@@ -229,61 +307,80 @@ class PatternScanner:
             logging.info(f"❌ Lỗi xử lý nến {symbol}: {e}")
 
     def analyze_candlestick_patterns(self, symbol_data, open_price, close_price, high_price, low_price):
-        """Phân tích mô hình nến"""
+        """Phân tích các mô hình nến"""
         try:
-            total_range = high_price - low_price
-            if total_range <= 0:
-                return None
-
             body_size = abs(close_price - open_price)
             upper_shadow = high_price - max(open_price, close_price)
             lower_shadow = min(open_price, close_price) - low_price
+            total_range = high_price - low_price
+
+            if total_range == 0:
+                return None
 
             upper_shadow_ratio = upper_shadow / total_range
-            lower_shadow_ratio = lower_shadow / total_range
             body_ratio = body_size / total_range
+            lower_shadow_ratio = lower_shadow / total_range
 
-            is_bullish = close_price > open_price * 1.001
-            is_bearish = close_price < open_price * 0.999
+            is_bearish = close_price > open_price
+            is_bullish = close_price < open_price
+            # enabled_bullish_patterns
+            # enabled_bearish_patterns
 
-            prev_candle = getattr(symbol_data, "prev_candle", None)
-
-            # --- Bearish patterns ---
-            if "SHOOTING_STAR" in self.config.enabled_bearish_patterns and \
-                    is_bearish and upper_shadow >= body_size * 1.5 and \
-                    upper_shadow_ratio >= 0.4 and lower_shadow_ratio <= 0.2:
+            # SHOOTING STAR
+            if ("SHOOTING_STAR" in self.config.enabled_bearish_patterns and
+                    is_bearish and
+                    upper_shadow >= body_size * 1.5 and
+                    upper_shadow_ratio >= 0.4 and
+                    lower_shadow_ratio <= 0.2):
                 return "SHOOTING_STAR"
 
-            if "HANGING_MAN" in self.config.enabled_bearish_patterns and \
-                    lower_shadow >= body_size * 1.5 and \
-                    lower_shadow_ratio >= 0.4 and upper_shadow_ratio <= 0.2:
-                return "HANGING_MAN"
 
-            if "BEARISH_ENGULFING" in self.config.enabled_bearish_patterns and prev_candle:
-                prev_open, prev_close = prev_candle
-                if is_bearish and prev_close > prev_open and \
-                        open_price > prev_close and close_price < prev_open:
+
+            # BEARISH ENGULFING
+            elif ("BEARISH_ENGULFING" in self.config.enabled_bearish_patterns and
+                  symbol_data.prev_candle is not None):
+                prev_open, prev_close = symbol_data.prev_candle
+                if (is_bearish and
+                        prev_close > prev_open and
+                        open_price > prev_close and
+                        close_price < prev_open):
                     return "BEARISH_ENGULFING"
 
-            # --- Bullish patterns ---
-            if "HAMMER" in self.config.enabled_bullish_patterns and \
-                    lower_shadow >= body_size * 1.5 and \
-                    lower_shadow_ratio >= 0.4 and upper_shadow_ratio <= 0.2:
+            # HAMMER
+            elif ("HAMMER" in self.config.enabled_bullish_patterns and
+                  is_bullish and
+                  lower_shadow >= body_size * 1.5 and
+                  lower_shadow_ratio >= 0.4 and
+                  upper_shadow_ratio <= 0.2):
                 return "HAMMER"
 
-            if "INVERTED_HAMMER" in self.config.enabled_bullish_patterns and \
-                    upper_shadow >= body_size * 1.5 and \
-                    upper_shadow_ratio >= 0.4 and lower_shadow_ratio <= 0.2:
+            # INVERTED HAMMER
+            elif ("INVERTED_HAMMER" in self.config.enabled_bullish_patterns and
+                  is_bullish and
+                  upper_shadow >= body_size * 1.5 and
+                  upper_shadow_ratio >= 0.4 and
+                  lower_shadow_ratio <= 0.2):
                 return "INVERTED_HAMMER"
 
-            if "BULLISH_ENGULFING" in self.config.enabled_bullish_patterns and prev_candle:
-                prev_open, prev_close = prev_candle
-                if is_bullish and prev_close < prev_open and \
-                        open_price < prev_close and close_price > prev_open:
+            # BULLISH ENGULFING
+            elif ("BULLISH_ENGULFING" in self.config.enabled_bullish_patterns and
+                  symbol_data.prev_candle is not None):
+                prev_open, prev_close = symbol_data.prev_candle
+                if (is_bullish and
+                        prev_close < prev_open and
+                        open_price < prev_close and
+                        close_price > prev_open):
                     return "BULLISH_ENGULFING"
 
-            return None
+            # HANGING MAN
+            elif ("HANGING_MAN" in self.config.enabled_bullish_patterns and
+                  is_bearish and
+                  lower_shadow >= body_size * 1.5 and
+                  lower_shadow_ratio >= 0.4 and
+                  upper_shadow_ratio <= 0.2):
+                return "HANGING_MAN"
 
+            return None
         except Exception as e:
-            logging.exception(f"Lỗi phân tích mô hình nến: {e}")
+            logging.info(f"Lỗi phân tích mô hình nến: {e}")
             return None

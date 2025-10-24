@@ -15,8 +15,7 @@ class Config:
 
             self.symbols = config_data.get('symbols', [])
             self.timeframe = config_data.get('timeframe', '5m')
-            self.websocket_base_url = config_data.get('websocket', {}).get('base_url', 'wss://stream.binance.com:9443')
-            self.reconnect_delay = config_data.get('websocket', {}).get('reconnect_delay', 5)
+            self.signal_time_frame = config_data.get('signal_time_frame', '5m')
 
             # Cấu hình logging
             logging_config = config_data.get('logging', {})
@@ -33,33 +32,19 @@ class Config:
             self.max_symbols = analysis_config.get('max_symbols_per_connection', 200)
             self.scan_all_pairs = analysis_config.get('scan_all_pairs', True)
 
-            # Cấu hình trading
-            trading_config = config_data.get('trading', {})
-            self.risk_reward_ratio = trading_config.get('risk_reward_ratio', 1.5)
-            self.stop_loss_percentage = trading_config.get('stop_loss_percentage', 1.0)
-            self.take_profit_percentage = trading_config.get('take_profit_percentage', 1.5)
-            self.entry_strategy = trading_config.get('entry_strategy', 'counter_trend')
-            self.entry_price_offset = trading_config.get('entry_price_offset', 0.05)
-            self.min_volume = trading_config.get('min_volume', 50000)
-            self.volume_spike_threshold = trading_config.get('volume_spike_threshold', 1.5)
-            self.account_balance = trading_config.get('account_balance', 1000)
-            self.leverage = trading_config.get('leverage', 10)
-            self.position_size_usdt = trading_config.get('position_size_usdt', 100)
-            self.virtual_trading = trading_config.get('virtual_trading', True)
-            self.max_open_orders = trading_config.get('max_open_orders', 10)
             # Binance
             binance_config = config_data.get('binance', {})
             self.api_key = binance_config.get('api_key', '')
             self.secret_key = binance_config.get('secret_key', '')
             self.base_url = binance_config.get('base_url', '')
-            self.testnet = binance_config.get('testnet', False)
+            self.testnet = binance_config.get('testnet', True)
 
-            # Cấu hình mô hình nến
-            self.enabled_bearish_patterns = trading_config.get('enabled_patterns', {}).get('bearish', [])
-            self.enabled_bullish_patterns = trading_config.get('enabled_patterns', {}).get('bullish', [])
-
-            print(f"✅ Đã tải cấu hình: {len(self.enabled_bearish_patterns)} mô hình giảm, {len(self.enabled_bullish_patterns)} mô hình tăng")
-            print(f"💰 Trading: Balance=${self.account_balance}, Position Size=${self.position_size_usdt}, Leverage={self.leverage}x")
+            # Cấu hình trading
+            trading_config = config_data.get('trading', {})
+            self.stop_loss_percentage = trading_config.get('stop_loss_percentage', 1.0)
+            self.take_profit_percentage = trading_config.get('take_profit_percentage', 1.5)
+            self.leverage = trading_config.get('leverage', 10)
+            self.position_size_usdt = trading_config.get('position_size_usdt', 100)
 
         except Exception as e:
             print(f"❌ Lỗi tải file cấu hình: {e}")

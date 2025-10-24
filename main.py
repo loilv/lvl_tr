@@ -23,6 +23,7 @@ def main():
 
         
     except Exception as e:
+        raise
         print(f"❌ Lỗi khởi động bot: {e}")
         sys.exit(1)
 
